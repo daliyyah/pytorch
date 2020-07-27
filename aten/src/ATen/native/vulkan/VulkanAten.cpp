@@ -1,6 +1,7 @@
 #include <ATen/native/vulkan/VulkanAten.h>
 #include <ATen/ATen.h>
 #include <ATen/Config.h>
+#include <ATen/InferSize.h>
 #include <ATen/NativeFunctions.h>
 #include <ATen/native/Pool.h>
 #include <ATen/native/UpSample.h>
@@ -296,6 +297,43 @@ at::Tensor vulkan_cat(TensorList tensors, int64_t dim) {
   return new_with_vtensor_vulkan(std::move(output), tensor.options());
 }
 
+Tensor vulkan_transpose(const Tensor& self, int64_t dim0, int64_t dim1) {
+  VulkanTensor& x = vtensor_from_vulkan(self);
+  VulkanTensor y = vulkan::detail::transpose(x, dim0, dim1);
+  return new_with_vtensor_vulkan(std::move(y), self.options());
+}
+
+Tensor& vulkan_transpose_(Tensor& self, int64_t dim0, int64_t dim1) {
+  VulkanTensor& x = vtensor_from_vulkan(self);
+  VulkanTensor y = vulkan::detail::transpose(x, dim0, dim1);
+  x = std::move(y);
+  return self;
+}
+
+Tensor vulkan_view(const Tensor& self, IntArrayRef size) {
+  COUT_FLF << " size:" << size << " numel:" << self.numel() << std::endl;
+  VulkanTensor& x = vtensor_from_vulkan(self);
+  auto inferred_size = at::infer_size(size, self.numel());
+  COUT_FLF << " inferred_size:" << IntArrayRef(inferred_size) << std::endl;
+  VulkanTensor y = vulkan::detail::reshape_copy(x, inferred_size);
+  return new_with_vtensor_vulkan(std::move(y), self.options());
+}
+
+Tensor vulkan_contiguous(const Tensor& self, MemoryFormat memory_format) {
+  return self;
+}
+
+Tensor vulkan_slice(
+    const Tensor& self,
+    int64_t dim,
+    int64_t start,
+    int64_t end,
+    int64_t step) {
+  const VulkanTensor& x = vtensor_from_vulkan(self);
+  VulkanTensor y = vulkan::detail::slice(x, dim, start, end, step);
+  return new_with_vtensor_vulkan(std::move(y), self.options());
+}
+
 Tensor vulkan_add(const Tensor& self, const Tensor& other, Scalar alpha) {
   auto xt = self.is_vulkan() ? self : self.vulkan();
   const auto& x = vtensor_from_vulkan(xt);
@@ -307,6 +345,19 @@ Tensor vulkan_add(const Tensor& self, const Tensor& other, Scalar alpha) {
   output.allocate_storage();
   vulkan::detail::add(output, x, y, a);
   return new_with_vtensor_vulkan(std::move(output), self.options());
+}
+
+Tensor vulkan_select(const Tensor& self, int64_t dim, int64_t index) {
+  auto sliced = vulkan_slice(self, dim, index, index + 1, 1);
+  auto sizes = self.sizes().vec();
+  sizes.erase(sizes.begin() + dim);
+  return vulkan_reshape(sliced, sizes);
+}
+
+Tensor vulkan_unsqueeze(const Tensor& self, int64_t dim) {
+  auto sizes = self.sizes().vec();
+  sizes.insert(sizes.begin() + dim, 1);
+  return vulkan_reshape(self, sizes);
 }
 
 Tensor& vulkan_add_(Tensor& self, const Tensor& other, Scalar alpha) {
